@@ -58,11 +58,12 @@ func (p *outboxPoller) Start(ctx context.Context) {
 // publishes each to Kafka, and marks them SENT or FAILED.
 func (p *outboxPoller) poll(ctx context.Context) error {
 	rows, err := p.db.QueryContext(ctx, `
-		UPDATE outbox SET status = 'PROCESSING'
+		UPDATE outbox SET status = 'PROCESSING', updated_at = now()
 		WHERE id IN (
 			SELECT id FROM outbox
 			WHERE status = 'PENDING'
 			   OR (status = 'FAILED' AND retry_count < 10)
+			   OR (status = 'PROCESSING' AND updated_at < now() - interval '5 minutes')
 			ORDER BY created_at
 			LIMIT 100
 			FOR UPDATE SKIP LOCKED

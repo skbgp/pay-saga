@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -163,7 +164,7 @@ func (h *orderHandler) handleGet(w http.ResponseWriter, r *http.Request) {
 }
 
 // insertOrderWithOutbox writes order + outbox event in one transaction.
-func insertOrderWithOutbox(ctx interface{ Value(interface{}) interface{} }, db *sql.DB, orderID string, req createOrderRequest, totalCents int) error {
+func insertOrderWithOutbox(ctx context.Context, db *sql.DB, orderID string, req createOrderRequest, totalCents int) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)

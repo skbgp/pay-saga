@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS outbox (
     payload     JSONB NOT NULL,
     status      TEXT NOT NULL DEFAULT 'PENDING',
     retry_count INTEGER NOT NULL DEFAULT 0,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox(status, created_at);
