@@ -62,13 +62,17 @@ func (p *paymentProcessor) handleMessage(ctx context.Context, msg kafka.Message)
 		return
 	}
 
-	// Consumer dedup: skip if already processed.
+	// Consumer dedup: claim the message before charging anything. The claim
+	// is confirmed only after the payment event is published, so a crash
+	// mid-charge results in a redelivery instead of an order stuck forever.
+	// The UNIQUE constraint on payments.order_id is what stops the retry from
+	// charging twice.
 	msgID := msgIdentifier(msg)
-	isDup, err := p.dedup.MarkSeen(ctx, common.TopicOrderCreated, msgID)
+	claimed, err := p.dedup.ClaimMessage(ctx, common.TopicOrderCreated, msgID)
 	if err != nil {
-		log.Printf("WARN: dedup check failed: %v (processing anyway)", err)
-	} else if isDup {
-		log.Printf("SKIP: duplicate message for order %s (msgID=%s)", order.OrderID, msgID)
+		log.Printf("WARN: dedup claim failed: %v (processing anyway)", err)
+	} else if !claimed {
+		log.Printf("SKIP: duplicate or in-flight message for order %s (msgID=%s)", order.OrderID, msgID)
 		return
 	}
 
@@ -119,6 +123,18 @@ func (p *paymentProcessor) handleMessage(ctx context.Context, msg kafka.Message)
 	})
 	if err != nil {
 		log.Printf("ERROR: publish payment event: %v", err)
+
+		// The saga never learned the outcome. Release the claim so a
+		// redelivery republishes it; the payments UNIQUE constraint keeps the
+		// retry from charging the customer a second time.
+		if relErr := p.dedup.ReleaseClaim(ctx, common.TopicOrderCreated, msgID); relErr != nil {
+			log.Printf("WARN: release dedup claim: %v", relErr)
+		}
+		return
+	}
+
+	if err := p.dedup.ConfirmProcessed(ctx, common.TopicOrderCreated, msgID); err != nil {
+		log.Printf("WARN: confirm dedup: %v", err)
 	}
 }
 
