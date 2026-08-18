@@ -59,6 +59,26 @@ CREATE TABLE IF NOT EXISTS inventory (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Dead-letter table for compensations that never succeeded.
+--
+-- A failed refund means the customer's money is in the wrong place, so it
+-- cannot be left as a log line: it is parked here for an operator to settle.
+CREATE TABLE IF NOT EXISTS compensation_failures (
+    id          BIGSERIAL PRIMARY KEY,
+    order_id    TEXT NOT NULL,
+    step        TEXT NOT NULL,
+    error       TEXT NOT NULL,
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    resolved    BOOLEAN NOT NULL DEFAULT false,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (order_id, step)
+);
+
+CREATE INDEX IF NOT EXISTS idx_compensation_unresolved
+    ON compensation_failures(resolved, created_at)
+    WHERE resolved = false;
+
 INSERT INTO inventory (product_id, name, quantity) VALUES
     ('WIDGET-1', 'Premium Widget', 5),
     ('WIDGET-2', 'Standard Widget', 100),
