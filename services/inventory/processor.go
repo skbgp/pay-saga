@@ -62,12 +62,15 @@ func (p *inventoryProcessor) handleMessage(ctx context.Context, msg kafka.Messag
 		return
 	}
 
+	// Claim the message before touching stock. The claim is only confirmed
+	// once the result has been published, so a crash part-way through leads
+	// to a redelivery rather than an order that silently never reserves.
 	msgID := fmt.Sprintf("%s:%d:%d", msg.Topic, msg.Partition, msg.Offset)
-	isDup, err := p.dedup.MarkSeen(ctx, common.TopicPaymentCompleted, msgID)
+	claimed, err := p.dedup.ClaimMessage(ctx, common.TopicPaymentCompleted, msgID)
 	if err != nil {
-		log.Printf("WARN: dedup check failed: %v", err)
-	} else if isDup {
-		log.Printf("SKIP: duplicate message for order %s", evt.OrderID)
+		log.Printf("WARN: dedup claim failed, processing anyway: %v", err)
+	} else if !claimed {
+		log.Printf("SKIP: duplicate or in-flight message for order %s", evt.OrderID)
 		return
 	}
 
@@ -96,6 +99,17 @@ func (p *inventoryProcessor) handleMessage(ctx context.Context, msg kafka.Messag
 	})
 	if err != nil {
 		log.Printf("ERROR: publish inventory result: %v", err)
+
+		// The saga never heard about this reservation. Drop the claim so the
+		// redelivery can republish instead of the order stalling forever.
+		if relErr := p.dedup.ReleaseClaim(ctx, common.TopicPaymentCompleted, msgID); relErr != nil {
+			log.Printf("WARN: release dedup claim: %v", relErr)
+		}
+		return
+	}
+
+	if err := p.dedup.ConfirmProcessed(ctx, common.TopicPaymentCompleted, msgID); err != nil {
+		log.Printf("WARN: confirm dedup: %v", err)
 	}
 }
 
